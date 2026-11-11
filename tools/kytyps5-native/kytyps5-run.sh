@@ -189,7 +189,7 @@ front "$GAME_APPID"
 	fi
 	SDL_JOYSTICK_ALLOW_BACKGROUND_EVENTS=1 KYTY_EXIT_MARKER="$MARKER" KYTY_GAMESCOPE_APPID=$GAME_APPID "$EMU" --game "$GAME" \
 		--screen-width "${SCREEN%x*}" --screen-height "${SCREEN#*x}" --fullscreen --no-splash --skip-notice-screen $HDR_ARGS $LANGUAGE_ARGS \
-		"${ADDCONT_ARGS[@]}" "${PATCH_ARGS[@]}"
+		"${ADDCONT_ARGS[@]}" "${PATCH_ARGS[@]}" ${KYTYPS5_EXTRA_ARGS:-}
 	echo "== exit=$?"
 } >> "$LOG" 2>&1 &
 EMUPID=$!

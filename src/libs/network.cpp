@@ -22,6 +22,15 @@
 #include <unistd.h>
 #endif
 
+#if defined(KYTY_HAVE_OPENSSL)
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
+#endif
+#include <mutex>
+#include <string>
+#include <vector>
+
 #include "common/assert.h"
 #include "common/common.h"
 #include "common/emulatorConfig.h"
@@ -2832,6 +2841,249 @@ int KYTY_SYSV_ABI SslFreeCaCerts(int ssl_ctx_id, void* ca_certs) {
 
 	return OK;
 }
+
+// ---- Client connections (sceSslCreateConnection .. sceSslDeleteConnection), on OpenSSL.
+// Calling convention and error codes read from GT7 1.700's caller (FUN_00762f20 / 0x75b350 / 0x75bf00):
+// connect/read/write return >= 0 on success; 0x8095F013 / 0x8095F014 mean "would block, call again"
+// (the title maps them to EAGAIN); any other negative value is a failure. Certificates are verified
+// against the host's CA store with the connection's host name (KYTY_SSL_NOVERIFY=1 turns that off).
+#if defined(KYTY_HAVE_OPENSSL)
+
+struct SslConnection {
+	bool        used = false;
+	SSL*        ssl  = nullptr;
+	int         sock = -1;
+	std::string host;
+};
+
+static std::mutex                 g_ssl_conn_mutex;
+static std::vector<SslConnection> g_ssl_conns;
+static SSL_CTX*                   g_ssl_client_ctx = nullptr;
+
+static SSL_CTX* SslClientContext() {
+	if (g_ssl_client_ctx == nullptr) {
+		g_ssl_client_ctx = SSL_CTX_new(TLS_client_method());
+		if (g_ssl_client_ctx != nullptr) {
+			SSL_CTX_set_min_proto_version(g_ssl_client_ctx, TLS1_2_VERSION);
+			SSL_CTX_set_default_verify_paths(g_ssl_client_ctx);
+		}
+	}
+	return g_ssl_client_ctx;
+}
+
+static SslConnection* SslFind(int ssl_id) {
+	if (ssl_id < 0 || static_cast<size_t>(ssl_id) >= g_ssl_conns.size() || !g_ssl_conns[ssl_id].used) {
+		return nullptr;
+	}
+	return &g_ssl_conns[static_cast<size_t>(ssl_id)];
+}
+
+static bool SslNoVerify() {
+	static const bool v = [] {
+		const char* e = std::getenv("KYTY_SSL_NOVERIFY");
+		return e != nullptr && e[0] == '1';
+	}();
+	return v;
+}
+
+// A negative result of SSL_connect/read/write as a libSceSsl error code; logs real failures.
+static int SslResult(SslConnection* c, int r, const char* what) {
+	const int e = SSL_get_error(c->ssl, r);
+	if (e == SSL_ERROR_WANT_READ) {
+		return SSL_ERROR_WANT_POLLIN;
+	}
+	if (e == SSL_ERROR_WANT_WRITE) {
+		return SSL_ERROR_WANT_POLLOUT;
+	}
+	if (e == SSL_ERROR_ZERO_RETURN) {
+		return 0;
+	}
+	char        buf[256] = {};
+	const auto  code     = ERR_get_error();
+	ERR_error_string_n(code, buf, sizeof(buf));
+	const long verify = SSL_get_verify_result(c->ssl);
+	std::fprintf(stderr, "[ssl] %s %s failed: ssl_error %d, %s, verify %ld (%s)\n", what, c->host.c_str(), e, buf,
+	             verify, X509_verify_cert_error_string(verify));
+	switch (verify) {
+		case X509_V_OK: break;
+		case X509_V_ERR_HOSTNAME_MISMATCH: return SSL_ERROR_CN_CHECK;
+		case X509_V_ERR_CERT_HAS_EXPIRED: return SSL_ERROR_NOT_AFTER_CHECK;
+		case X509_V_ERR_CERT_NOT_YET_VALID: return SSL_ERROR_NOT_BEFORE_CHECK;
+		default: return SSL_ERROR_UNKNOWN_CA;
+	}
+	if (e == SSL_ERROR_SYSCALL) {
+		return SSL_ERROR_SOCKET_CLOSED;
+	}
+	return SSL_ERROR_FATAL_ALERT;
+}
+
+int KYTY_SYSV_ABI SslCreateConnection(int ssl_ctx_id, int sock, const char* host) {
+	PRINT_NAME();
+
+	LOGF("\t ssl_ctx_id = %d, sock = %d, host = %s\n", ssl_ctx_id, sock, host != nullptr ? host : "<null>");
+
+	Net::NativeSocket native {};
+	if (!Net::GetSocketBackend(sock, &native)) {
+		return SSL_ERROR_INVALID_ID;
+	}
+	SSL_CTX* ctx = SslClientContext();
+	if (ctx == nullptr) {
+		return SSL_ERROR_OUT_OF_SIZE;
+	}
+	SSL* ssl = SSL_new(ctx);
+	if (ssl == nullptr || SSL_set_fd(ssl, static_cast<int>(native)) != 1) {
+		SSL_free(ssl);
+		return SSL_ERROR_OUT_OF_SIZE;
+	}
+	if (host != nullptr && host[0] != '\0') {
+		SSL_set_tlsext_host_name(ssl, host);
+		if (!SslNoVerify()) {
+			SSL_set1_host(ssl, host);
+		}
+	}
+	SSL_set_verify(ssl, SslNoVerify() ? SSL_VERIFY_NONE : SSL_VERIFY_PEER, nullptr);
+
+	std::lock_guard lock(g_ssl_conn_mutex);
+	size_t          id = 0;
+	while (id < g_ssl_conns.size() && g_ssl_conns[id].used) {
+		id++;
+	}
+	if (id == g_ssl_conns.size()) {
+		g_ssl_conns.emplace_back();
+	}
+	g_ssl_conns[id] = {true, ssl, sock, host != nullptr ? host : ""};
+	std::fprintf(stderr, "[ssl] connection %zu: socket %d host %s%s\n", id, sock, host != nullptr ? host : "",
+	             SslNoVerify() ? " (verify off)" : "");
+	return static_cast<int>(id);
+}
+
+int KYTY_SYSV_ABI SslDeleteConnection(int ssl_id) {
+	PRINT_NAME();
+
+	std::lock_guard lock(g_ssl_conn_mutex);
+	auto*           c = SslFind(ssl_id);
+	if (c == nullptr) {
+		return SSL_ERROR_INVALID_ID;
+	}
+	SSL_free(c->ssl);
+	*c = {};
+	return OK;
+}
+
+int KYTY_SYSV_ABI SslConnect(int ssl_id) {
+	PRINT_NAME();
+
+	std::lock_guard lock(g_ssl_conn_mutex);
+	auto*           c = SslFind(ssl_id);
+	if (c == nullptr) {
+		return SSL_ERROR_INVALID_ID;
+	}
+	const int r = SSL_connect(c->ssl);
+	if (r == 1) {
+		std::fprintf(stderr, "[ssl] connection %d: %s connected (%s, %s)\n", ssl_id, c->host.c_str(),
+		             SSL_get_version(c->ssl), SSL_get_cipher_name(c->ssl));
+		return OK;
+	}
+	return SslResult(c, r, "connect");
+}
+
+int KYTY_SYSV_ABI SslClose(int ssl_id) {
+	PRINT_NAME();
+
+	std::lock_guard lock(g_ssl_conn_mutex);
+	auto*           c = SslFind(ssl_id);
+	if (c == nullptr) {
+		return SSL_ERROR_INVALID_ID;
+	}
+	SSL_shutdown(c->ssl);  // non-blocking: one close_notify, no wait for the peer's
+	return OK;
+}
+
+int KYTY_SYSV_ABI SslRead(int ssl_id, void* buf, int size, int flags) {
+	PRINT_NAME();
+
+	(void)flags;
+	if (buf == nullptr || size < 0) {
+		return SSL_ERROR_INVALID_ARG;
+	}
+	std::lock_guard lock(g_ssl_conn_mutex);
+	auto*           c = SslFind(ssl_id);
+	if (c == nullptr) {
+		return SSL_ERROR_INVALID_ID;
+	}
+	if (size == 0) {
+		return 0;
+	}
+	const int r = SSL_read(c->ssl, buf, size);
+	return r > 0 ? r : SslResult(c, r, "read");
+}
+
+int KYTY_SYSV_ABI SslWrite(int ssl_id, const void* buf, int size, int flags) {
+	PRINT_NAME();
+
+	(void)flags;
+	if (buf == nullptr || size < 0) {
+		return SSL_ERROR_INVALID_ARG;
+	}
+	std::lock_guard lock(g_ssl_conn_mutex);
+	auto*           c = SslFind(ssl_id);
+	if (c == nullptr) {
+		return SSL_ERROR_INVALID_ID;
+	}
+	if (size == 0) {
+		return 0;
+	}
+	const int r = SSL_write(c->ssl, buf, size);
+	return r > 0 ? r : SslResult(c, r, "write");
+}
+
+// The option bits are not decoded; verification follows KYTY_SSL_NOVERIFY.
+int KYTY_SYSV_ABI SslEnableVerifyOption(int ssl_id, uint32_t flags) {
+	PRINT_NAME();
+	LOGF("\t ssl_id = %d, flags = 0x%08x\n", ssl_id, flags);
+	std::lock_guard lock(g_ssl_conn_mutex);
+	return SslFind(ssl_id) != nullptr ? OK : SSL_ERROR_INVALID_ID;
+}
+
+int KYTY_SYSV_ABI SslDisableVerifyOption(int ssl_id, uint32_t flags) {
+	PRINT_NAME();
+	LOGF("\t ssl_id = %d, flags = 0x%08x\n", ssl_id, flags);
+	std::lock_guard lock(g_ssl_conn_mutex);
+	return SslFind(ssl_id) != nullptr ? OK : SSL_ERROR_INVALID_ID;
+}
+
+int KYTY_SYSV_ABI SslSetAlpn(int ssl_id, const void* protos) {
+	PRINT_NAME();
+	(void)protos;  // no ALPN offered: plain HTTP/1.1
+	std::lock_guard lock(g_ssl_conn_mutex);
+	return SslFind(ssl_id) != nullptr ? OK : SSL_ERROR_INVALID_ID;
+}
+
+const char* KYTY_SYSV_ABI SslGetAlpnSelected(int ssl_id) {
+	PRINT_NAME();
+	(void)ssl_id;
+	return nullptr;  // none selected
+}
+
+int KYTY_SYSV_ABI SslSetVersionOption(int ssl_id, uint32_t value) {
+	PRINT_NAME();
+	LOGF("\t ssl_id = %d, value = 0x%08x\n", ssl_id, value);
+	std::lock_guard lock(g_ssl_conn_mutex);
+	return SslFind(ssl_id) != nullptr ? OK : SSL_ERROR_INVALID_ID;
+}
+#else
+int KYTY_SYSV_ABI SslCreateConnection(int, int, const char*) { return SSL_ERROR_OUT_OF_SIZE; }
+int KYTY_SYSV_ABI SslDeleteConnection(int) { return SSL_ERROR_INVALID_ID; }
+int KYTY_SYSV_ABI SslConnect(int) { return SSL_ERROR_INVALID_ID; }
+int KYTY_SYSV_ABI SslClose(int) { return SSL_ERROR_INVALID_ID; }
+int KYTY_SYSV_ABI SslRead(int, void*, int, int) { return SSL_ERROR_INVALID_ID; }
+int KYTY_SYSV_ABI SslWrite(int, const void*, int, int) { return SSL_ERROR_INVALID_ID; }
+int KYTY_SYSV_ABI SslEnableVerifyOption(int, uint32_t) { return SSL_ERROR_INVALID_ID; }
+int KYTY_SYSV_ABI SslDisableVerifyOption(int, uint32_t) { return SSL_ERROR_INVALID_ID; }
+int KYTY_SYSV_ABI SslSetAlpn(int, const void*) { return SSL_ERROR_INVALID_ID; }
+const char* KYTY_SYSV_ABI SslGetAlpnSelected(int) { return nullptr; }
+int KYTY_SYSV_ABI SslSetVersionOption(int, uint32_t) { return SSL_ERROR_INVALID_ID; }
+#endif
 
 } // namespace Ssl
 

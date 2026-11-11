@@ -1450,13 +1450,14 @@ int KYTY_SYSV_ABI NetResolverCreate(const char* name, int memid, int flags) {
 	     "\t flags = %d\n",
 	     name != nullptr ? name : "<null>", memid, flags);
 
-	if (name == nullptr || flags != 0) {
+	// The name is optional on the console (GT7 passes null); only flags must be 0.
+	if (flags != 0) {
 		return NET_ERROR_EINVAL;
 	}
 
 	EXIT_IF(g_net == nullptr);
 
-	const int id = g_net->ResolverCreate(name, memid);
+	const int id = g_net->ResolverCreate(name != nullptr ? name : "", memid);
 	if (id < 0) {
 		return NET_ERROR_RESOLVER_ENOSPACE;
 	}
@@ -4199,6 +4200,21 @@ static int np_complete_locked(NpRequest* request, int result) {
 	return (request->async ? OK : result);
 }
 
+// KYTY_NP_ONLINE=1: report PSN as reachable and Premium (PS Plus) as authorized, for titles that talk
+// to a local server (GT7 with gt7-server). Off by default: PSN stays unreachable as before.
+static bool np_online() {
+	static const bool on = [] {
+		const char* v = std::getenv("KYTY_NP_ONLINE");
+		return v != nullptr && v[0] == '1';
+	}();
+	return on;
+}
+
+using NpReachabilityCallback = void (*)(int user_id, uint32_t state, void* userdata);
+static NpReachabilityCallback g_np_reach_cb       = nullptr;
+static void*                  g_np_reach_userdata = nullptr;
+static bool                   g_np_reach_pending  = false;
+
 int KYTY_SYSV_ABI NpCheckCallback() {
 	PRINT_NAME();
 
@@ -4213,6 +4229,11 @@ int KYTY_SYSV_ABI NpCheckCallback() {
 		entry.callback(Config::GetUserId(),
 		               IsSignedIn(Config::GetUserId()) ? np_state_signed_in : np_state_signed_out,
 		               entry.userdata);
+	}
+	if (np_online() && g_np_reach_pending && g_np_reach_cb != nullptr) {
+		g_np_reach_pending = false;
+		g_np_reach_cb(Config::GetUserId(), 2 /* REACHABLE */, g_np_reach_userdata);
+		std::fprintf(stderr, "[np] CheckCallback -> REACHABLE\n");
 	}
 
 	return OK;
@@ -4294,8 +4315,12 @@ int KYTY_SYSV_ABI NpRegisterPremiumEventCallback(void* /*callback*/, void* /*use
 	return OK;
 }
 
-int KYTY_SYSV_ABI NpRegisterNpReachabilityStateCallback(void* /*callback*/, void* /*userdata*/) {
+int KYTY_SYSV_ABI NpRegisterNpReachabilityStateCallback(void* callback, void* userdata) {
 	PRINT_NAME();
+
+	g_np_reach_cb       = reinterpret_cast<NpReachabilityCallback>(callback);
+	g_np_reach_userdata = userdata;
+	g_np_reach_pending  = (callback != nullptr);
 
 	return OK;
 }
@@ -4555,6 +4580,10 @@ int KYTY_SYSV_ABI NpCheckNpReachability(int req_id, int user_id) {
 		return np_error_request_not_found;
 	}
 
+	if (np_online()) {
+		std::fprintf(stderr, "[np] NpCheckNpReachability user=%d -> REACHABLE\n", user_id);
+		return np_complete_locked(request, OK);
+	}
 	return np_complete_locked(request, np_reachability_result(user_id));
 }
 
@@ -4614,6 +4643,11 @@ int KYTY_SYSV_ABI NpCheckPremium(int req_id, const NpCheckPremiumParameter* para
 
 	std::memset(result, 0, sizeof(*result));
 
+	if (np_online()) {
+		result->authorized = true;
+		std::fprintf(stderr, "[np] NpCheckPremium -> authorized\n");
+		return np_complete_locked(request, OK);
+	}
 	// The simulated account has no premium eligibility.
 	return np_complete_locked(request, np_reachability_result(param->user_id));
 }
@@ -4639,7 +4673,7 @@ int KYTY_SYSV_ABI NpGetNpReachabilityState(int user_id, uint32_t* state) {
 
 	LOGF("\t user_id = %d\n", user_id);
 
-	*state = np_reachability_result(user_id) == OK ? 2 : 0; // REACHABLE / UNAVAILABLE
+	*state = (np_online() || np_reachability_result(user_id) == OK) ? 2 : 0; // REACHABLE / UNAVAILABLE
 
 	return OK;
 }

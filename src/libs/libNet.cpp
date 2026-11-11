@@ -1915,6 +1915,42 @@ static int np_auth_wait_or_poll_async(int req_id, int* result) {
 	return 0;
 }
 
+// KYTY_NP_ONLINE=1 (see network.cpp): answer the PSN auth calls the way gt7-server's console patcher
+// does, so a title talking to a local server signs in: an ID token JWT the title decodes for
+// ver / iss / env_iss_id / duid, and an auth code with issuer 256. Off by default.
+static bool np_auth_online() {
+	static const bool on = [] {
+		const char* v = std::getenv("KYTY_NP_ONLINE");
+		return v != nullptr && v[0] == '1';
+	}();
+	return on;
+}
+
+static std::string np_auth_b64url(const std::string& in) {
+	static const char a[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+	std::string       out;
+	for (size_t i = 0; i < in.size(); i += 3) {
+		uint32_t v = static_cast<uint8_t>(in[i]) << 16u;
+		if (i + 1 < in.size()) v |= static_cast<uint8_t>(in[i + 1]) << 8u;
+		if (i + 2 < in.size()) v |= static_cast<uint8_t>(in[i + 2]);
+		out += a[(v >> 18u) & 63u];
+		out += a[(v >> 12u) & 63u];
+		if (i + 1 < in.size()) out += a[(v >> 6u) & 63u];
+		if (i + 2 < in.size()) out += a[v & 63u];
+	}
+	return out;
+}
+
+static int np_auth_complete_ok(NpAuthRequest* request) {
+	if (request->state == NpAuthRequestState::Complete) {
+		request->result = NP_AUTH_ERROR_INVALID_ARGUMENT;
+		return NP_AUTH_ERROR_INVALID_ARGUMENT;
+	}
+	request->state  = NpAuthRequestState::Complete;
+	request->result = 0;
+	return 0;
+}
+
 static int np_auth_complete_unavailable(NpAuthRequest* request, int user_id) {
 	if (request->state == NpAuthRequestState::Complete) {
 		request->result = NP_AUTH_ERROR_INVALID_ARGUMENT;
@@ -1981,6 +2017,17 @@ static int KYTY_SYSV_ABI NpAuthGetAuthorizationCodeV3(
 	if (request == nullptr) {
 		return NP_AUTH_ERROR_REQUEST_NOT_FOUND;
 	}
+	if (np_auth_online()) {
+		static const char code[17] = "gt7-ps5-local-01";
+		if (auth_code != nullptr) {
+			memcpy(auth_code, code, 16);
+		}
+		if (issuer_id != nullptr) {
+			*issuer_id = 256;
+		}
+		std::fprintf(stderr, "[npauth] GetAuthorizationCodeV3 -> local code, issuer 256\n");
+		return np_auth_complete_ok(request);
+	}
 	return np_auth_complete_unavailable(request, param->user_id);
 }
 
@@ -2008,6 +2055,18 @@ static int KYTY_SYSV_ABI NpAuthGetIdTokenV3(int req_id, const NpAuthGetIdTokenPa
 	auto*            request = np_auth_find_request(req_id);
 	if (request == nullptr) {
 		return NP_AUTH_ERROR_REQUEST_NOT_FOUND;
+	}
+	if (np_auth_online()) {
+		const std::string jwt =
+		    np_auth_b64url(R"({"alg":"RS256","typ":"JWT"})") + "." +
+		    np_auth_b64url(
+		        R"({"ver":1,"iss":"gt7-local","env_iss_id":256,"duid":"0000000000000001","sub":"Kyty"})") +
+		    ".sig";
+		if (id_token != nullptr) {
+			memcpy(id_token, jwt.c_str(), jwt.size() + 1);
+		}
+		std::fprintf(stderr, "[npauth] GetIdTokenV3 -> local JWT (%zu bytes)\n", jwt.size());
+		return np_auth_complete_ok(request);
 	}
 	return np_auth_complete_unavailable(request, param->user_id);
 }
@@ -2283,6 +2342,14 @@ NpWebApi2SendRequest(int64_t request_id, const void* data, size_t data_size,
 		}
 	}
 
+	if (LibNpAuth::np_auth_online()) {
+		// gt7-server: first-party PSN calls (profile, friends, restrictions) get HTTP 200, empty body.
+		if (response_info_option != nullptr) {
+			response_info_option->http_status = 200;
+		}
+		std::fprintf(stderr, "[npwebapi2] SendRequest %" PRIi64 " -> 200 (empty)\n", request_id);
+		return 0;
+	}
 	return NP_WEBAPI2_ERROR_NOT_SIGNED_IN;
 }
 

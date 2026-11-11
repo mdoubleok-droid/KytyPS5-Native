@@ -339,6 +339,10 @@ set(kyty_emulator_link_libraries common Vulkan::Headers spirv-tools-opt spirv-to
 if(LINUX)
 	find_package(Threads REQUIRED)
 	list(APPEND kyty_emulator_link_libraries m ${CMAKE_DL_LIBS} Threads::Threads)
+	# libSceSsl client connections (sceSslCreateConnection/Connect/Read/Write) run on OpenSSL.
+	find_package(OpenSSL REQUIRED)
+	list(APPEND kyty_emulator_link_libraries OpenSSL::SSL OpenSSL::Crypto)
+	add_compile_definitions(KYTY_HAVE_OPENSSL)
 endif()
 
 set(inc_headers

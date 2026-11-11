@@ -297,6 +297,18 @@ LIB_DEFINE(InitNet_1_Ssl) {
 	LIB_FUNC("0K1yQ6Lv-Yc", Ssl::SslTerm);
 	LIB_FUNC("TDfQqO-gMbY", Ssl::SslGetCaCerts);
 	LIB_FUNC("qIvLs0gYxi0", Ssl::SslFreeCaCerts);
+	LIB_FUNC("tuscfitnhEo", Ssl::SslCreateConnection);
+	LIB_FUNC("HJ1n138CQ2g", Ssl::SslDeleteConnection);
+	LIB_FUNC("zXvd6iNyfgc", Ssl::SslConnect);
+	LIB_FUNC("viRXSHZYd0c", Ssl::SslClose);
+	LIB_FUNC("jltWpVKtetg", Ssl::SslRead);
+	LIB_FUNC("iNjkt9Poblw", Ssl::SslWrite);
+	LIB_FUNC("po1X86mgHDU", Ssl::SslEnableVerifyOption);
+	LIB_FUNC("PwsHbErG+e8", Ssl::SslDisableVerifyOption);
+	LIB_FUNC("TL86glUrmUw", Ssl::SslSetAlpn);
+	LIB_FUNC("4O7+bRkRUe8", Ssl::SslGetAlpnSelected);
+	// Name not recovered (NID hash); GT7 1.700 passes a value from a TLS-version table.
+	LIB_FUNC("QWSxBzf6lAg", Ssl::SslSetVersionOption);
 }
 
 } // namespace LibSsl

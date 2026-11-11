@@ -113,6 +113,17 @@ int KYTY_SYSV_ABI SslInit(uint64_t pool_size);
 int KYTY_SYSV_ABI SslTerm(int ssl_ctx_id);
 int KYTY_SYSV_ABI SslGetCaCerts(int ssl_ctx_id, void* ca_certs);
 int KYTY_SYSV_ABI SslFreeCaCerts(int ssl_ctx_id, void* ca_certs);
+int KYTY_SYSV_ABI SslCreateConnection(int ssl_ctx_id, int sock, const char* host);
+int KYTY_SYSV_ABI SslDeleteConnection(int ssl_id);
+int KYTY_SYSV_ABI SslConnect(int ssl_id);
+int KYTY_SYSV_ABI SslClose(int ssl_id);
+int KYTY_SYSV_ABI SslRead(int ssl_id, void* buf, int size, int flags);
+int KYTY_SYSV_ABI SslWrite(int ssl_id, const void* buf, int size, int flags);
+int KYTY_SYSV_ABI SslEnableVerifyOption(int ssl_id, uint32_t flags);
+int KYTY_SYSV_ABI SslDisableVerifyOption(int ssl_id, uint32_t flags);
+int KYTY_SYSV_ABI SslSetAlpn(int ssl_id, const void* protos);
+const char* KYTY_SYSV_ABI SslGetAlpnSelected(int ssl_id);
+int KYTY_SYSV_ABI SslSetVersionOption(int ssl_id, uint32_t value);
 
 } // namespace Ssl
 

@@ -95,6 +95,11 @@ struct SystemServiceHdrToneMapLuminance {
 	float min_tone_map_luminance;
 };
 
+// Called around the pause screen to bring the background music player back: nothing to do here.
+static int KYTY_SYSV_ABI SystemServiceReenableMusicPlayer() {
+	return OK;
+}
+
 static int KYTY_SYSV_ABI SystemServiceHideSplashScreen() {
 	PRINT_NAME();
 	Graphics::HideSplashScreen();
@@ -592,6 +597,7 @@ LIB_DEFINE(InitSystemGesture_1) {
 
 LIB_DEFINE(InitSystemService_1) {
 	LIB_FUNC("JoBqSQt1yyA", SystemService::SystemServiceLoadExec);
+	LIB_FUNC("9kPCz7Or+1Y", SystemService::SystemServiceReenableMusicPlayer);
 	LIB_FUNC("Vo5V8KAwCmk", SystemService::SystemServiceHideSplashScreen);
 	LIB_FUNC("fZo48un7LK4", SystemService::SystemServiceParamGetInt);
 	LIB_FUNC("SsC-m-S9JTA", SystemService::SystemServiceParamGetString);

@@ -20,6 +20,13 @@
 #include <magic_enum.hpp>
 #include <vector>
 
+#include <algorithm>
+#include <atomic>
+#include <cstdio>
+#include <array>
+#include <cmath>
+#include <cstdlib>
+
 namespace Libs::Audio {
 
 namespace {
@@ -34,7 +41,14 @@ constexpr int AUDIO_OUT_PORT_TYPE_AUDIO3D   = 126;
 constexpr int AUDIO_OUT_PORT_TYPE_AUX       = 127;
 
 constexpr uint32_t AUDIO_OUT_PARAM_FORMAT_MASK = 0x000000ffu;
-constexpr uint64_t AUDIO_OUT_TARGET_LATENCY_US = 40000;
+// KYTY_AUDIO_LATENCY_US sets the output cushion, 40 ms by default.
+static uint64_t AudioTargetLatencyUs() {
+	static const uint64_t value = [] {
+		const char* v = std::getenv("KYTY_AUDIO_LATENCY_US");
+		return v != nullptr ? std::clamp<uint64_t>(std::strtoull(v, nullptr, 10), 10000, 500000) : 40000;
+	}();
+	return value;
+}
 
 constexpr int      AUDIO_IN_SILENT_STATE_DEVICE_NONE = 0x1;
 constexpr uint32_t AUDIO_IN_GRAIN_MAX_ASYNC          = 384;
@@ -302,6 +316,9 @@ bool Audio::OpenSdlDevice(PortOut* port) {
 		port->device_period_s = static_cast<double>(device_frames) / device_spec.freq;
 	}
 
+	std::fprintf(stderr, "[audio] open port type=%d guest_ch=%d out_ch=%d rate=%d samples=%u format=0x%04x device_ch=%d device_rate=%d device_frames=%d\n",
+	             port->type, port->channels_num, desired.channels, desired.freq, port->samples_num,
+	             static_cast<unsigned>(desired.format), device_spec.channels, device_spec.freq, device_frames);
 	LOGF("AudioOut: opened SDL stream (%d Hz, %d ch, format 0x%04x)\n", desired.freq,
 	     desired.channels, static_cast<unsigned>(desired.format));
 	return true;
@@ -395,6 +412,25 @@ bool Audio::QueueSdlAudio(PortOut* port, const void* data, bool blocking, float 
 
 	std::vector<uint8_t> prepared_buffer;
 	const void*          prepared_data = PrepareOutputBuffer(*port, data, &prepared_buffer, gain, gains);
+	// Level report: what each port is really given, per channel, about every 5 s of audio.
+	if (FormatIsFloat(port->format) && port->samples_num != 0) {
+		static std::atomic<uint32_t> level_blocks {0};
+		if (++level_blocks % 1200 == 0) {
+			const auto* pcm      = static_cast<const float*>(prepared_data);
+			const auto  channels = OutputChannels(*port);
+			std::array<float, 8> peak {};
+			for (uint32_t frame = 0; frame < port->samples_num; frame++) {
+				for (uint32_t ch = 0; ch < channels && ch < 8; ch++) {
+					peak[ch] = std::max(peak[ch], std::abs(pcm[frame * channels + ch]));
+				}
+			}
+			std::fprintf(stderr, "[audio] level ch=%u samples=%u type=%d gain=%.3f vol0=%d peaks %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n",
+			             channels, port->samples_num, port->type, static_cast<double>(gain), port->volume[0],
+			             static_cast<double>(peak[0]), static_cast<double>(peak[1]), static_cast<double>(peak[2]),
+			             static_cast<double>(peak[3]), static_cast<double>(peak[4]), static_cast<double>(peak[5]),
+			             static_cast<double>(peak[6]), static_cast<double>(peak[7]));
+		}
+	}
 	const auto           output_channels = OutputChannels(*port);
 	const auto           prepared_size =
 	    BytesPerSample(port->format) * output_channels * port->samples_num;
@@ -405,7 +441,7 @@ bool Audio::QueueSdlAudio(PortOut* port, const void* data, bool blocking, float 
 		const auto buffer_us = (1000000ULL * port->samples_num) / port->freq;
 		const auto buffers =
 		    buffer_us != 0
-		        ? static_cast<uint32_t>((AUDIO_OUT_TARGET_LATENCY_US + buffer_us - 1) / buffer_us)
+		        ? static_cast<uint32_t>((AudioTargetLatencyUs() + buffer_us - 1) / buffer_us)
 		        : 2u;
 		// The cushion also holds a whole pull of the device and the blocks around it, or its pulls
 		// would empty the queue.
@@ -458,6 +494,12 @@ bool Audio::QueueSdlAudio(PortOut* port, const void* data, bool blocking, float 
 		if (blocking && queued < static_cast<int>(prepared_size)) {
 			if (port->queue_primed) {
 				Common::DebugCounters::Add(Common::DebugCounters::Counter::AudioUnderruns);
+				static std::atomic<uint32_t> underrun_logs {0};
+				if (const auto count = ++underrun_logs; count <= 20 || count % 50 == 0) {
+					std::fprintf(stderr, "[audio] underrun #%u ch=%d samples=%u queued=%d block=%u min=%u late=%d dry=%d stalled=%d backlog=%d\n",
+					             count, port->channels_num, port->samples_num, queued, prepared_size, min_queued_size,
+					             late ? 1 : 0, dry ? 1 : 0, stalled ? 1 : 0, backlog ? 1 : 0);
+				}
 			}
 			port->queue_primed = false;
 		}
@@ -642,11 +684,11 @@ uint32_t Audio::AudioOutOutputs(OutputParam* params, uint32_t num, bool blocking
 			// without another audio device, instead of waiting on the HID queue.
 			if (port.type == AUDIO_OUT_PORT_TYPE_PADSPK && !controller_uses_bluetooth) {
 				any_device = true;
-				if (blocking && controller_queued_us > AUDIO_OUT_TARGET_LATENCY_US) {
+				if (blocking && controller_queued_us > AudioTargetLatencyUs()) {
 					// Limit a stalled USB endpoint to one audio block of waiting.
 					const uint64_t block_us = 1000000ULL * port.samples_num / port.freq;
 					deadline = std::max(deadline, LibKernel::KernelGetProcessTime() +
-					                                  std::min(controller_queued_us - AUDIO_OUT_TARGET_LATENCY_US,
+					                                  std::min(controller_queued_us - AudioTargetLatencyUs(),
 					                                           block_us));
 				}
 			}

@@ -21,6 +21,10 @@
 #include <map>
 #include <vector>
 
+#include <cstdio>
+#define KYTY_SAVE_TRACE() std::fprintf(stderr, "[save] %s\n", __func__)
+
+
 namespace Libs {
 
 LIB_VERSION("SaveData", 1, "SaveData", 1, 1);
@@ -543,6 +547,7 @@ static int mount_save_data(int slot, const std::filesystem::path& directory,
 
 int KYTY_SYSV_ABI SaveDataInitialize3(const void* /*init*/) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	// EXIT_NOT_IMPLEMENTED(init != nullptr);
 
@@ -551,6 +556,7 @@ int KYTY_SYSV_ABI SaveDataInitialize3(const void* /*init*/) {
 
 int KYTY_SYSV_ABI SaveDataTerminate() {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	Common::LockGuard lock(g_mount_mutex);
 	if (!g_mount_slots.Empty()) {
@@ -564,6 +570,7 @@ int KYTY_SYSV_ABI SaveDataTerminate() {
 
 int KYTY_SYSV_ABI SaveDataCreateTransactionResource(uint32_t size) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	LOGF("\t size = %" PRIu32 "\n", size);
 
@@ -572,6 +579,7 @@ int KYTY_SYSV_ABI SaveDataCreateTransactionResource(uint32_t size) {
 
 int KYTY_SYSV_ABI SaveDataDeleteTransactionResource(int32_t resource) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	LOGF("\t resource = %" PRId32 "\n", resource);
 
@@ -581,6 +589,7 @@ int KYTY_SYSV_ABI SaveDataDeleteTransactionResource(int32_t resource) {
 int KYTY_SYSV_ABI SaveDataDirNameSearch(const SaveDataDirNameSearchCond* cond,
                                         SaveDataDirNameSearchResult*     result) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (cond == nullptr || result == nullptr ||
 	    (cond->title_id != nullptr && !valid_path_component(cond->title_id->data)) ||
@@ -692,6 +701,7 @@ int KYTY_SYSV_ABI SaveDataDirNameSearch(const SaveDataDirNameSearchCond* cond,
 
 int KYTY_SYSV_ABI SaveDataMount3(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (mount == nullptr || mount_result == nullptr || mount->dir_name == nullptr ||
 	    !valid_path_component(mount->dir_name->data)) {
@@ -772,6 +782,7 @@ int KYTY_SYSV_ABI SaveDataMount3(const SaveDataMount3* mount, SaveDataMountResul
 int KYTY_SYSV_ABI SaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup_param,
                                                SaveDataMemorySetupResult*  result) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (setup_param == nullptr || setup_param->slot_id >= 4 || setup_param->memory_size == 0 ||
 	    setup_param->memory_size > SAVE_DATA_MEMORY_MAX_SIZE || (setup_param->option & ~3u) != 0) {
@@ -831,6 +842,7 @@ int KYTY_SYSV_ABI SaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup
 
 int KYTY_SYSV_ABI SaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (get_param == nullptr || get_param->slot_id >= 4) {
 		return SAVE_DATA_ERROR_PARAMETER;
@@ -875,6 +887,7 @@ int KYTY_SYSV_ABI SaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
 
 int KYTY_SYSV_ABI SaveDataSetSaveDataMemory2(const SaveDataMemorySet2* set_param) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (set_param == nullptr || set_param->slot_id >= 4 || set_param->data_num > 5 ||
 	    (set_param->data == nullptr && set_param->data_num != 0)) {
@@ -935,6 +948,7 @@ int KYTY_SYSV_ABI SaveDataSetSaveDataMemory2(const SaveDataMemorySet2* set_param
 int KYTY_SYSV_ABI SaveDataTransferringMount(const SaveDataTransferringMount* mount,
                                             SaveDataMountResult*             mount_result) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (mount == nullptr || mount_result == nullptr || mount->title_id == nullptr ||
 	    mount->dir_name == nullptr || !valid_path_component(mount->title_id->data) ||
@@ -972,6 +986,7 @@ int KYTY_SYSV_ABI SaveDataTransferringMount(const SaveDataTransferringMount* mou
 
 int KYTY_SYSV_ABI SaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount_point) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (mount_point == nullptr) {
 		return SAVE_DATA_ERROR_PARAMETER;
@@ -1000,6 +1015,7 @@ int KYTY_SYSV_ABI SaveDataUmount2(uint32_t mode, const SaveDataMountPoint* mount
 int KYTY_SYSV_ABI SaveDataPrepare(const SaveDataMountPoint*   mount_point,
                                   const SaveDataPrepareParam* param) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (mount_point == nullptr || param == nullptr) {
 		return SAVE_DATA_ERROR_PARAMETER;
@@ -1015,6 +1031,7 @@ int KYTY_SYSV_ABI SaveDataPrepare(const SaveDataMountPoint*   mount_point,
 
 int KYTY_SYSV_ABI SaveDataCommit(const SaveDataCommitParam* param) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (param == nullptr) {
 		return SAVE_DATA_ERROR_PARAMETER;
@@ -1034,6 +1051,7 @@ int KYTY_SYSV_ABI SaveDataCommit(const SaveDataCommitParam* param) {
 
 int KYTY_SYSV_ABI SaveDataDelete(const SaveDataDelete* del) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (del == nullptr || del->dir_name == nullptr || !valid_path_component(del->dir_name->data) ||
 	    (del->title_id != nullptr && !valid_path_component(del->title_id->data))) {
@@ -1065,6 +1083,7 @@ int KYTY_SYSV_ABI SaveDataDelete(const SaveDataDelete* del) {
 int KYTY_SYSV_ABI SaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_t param_type,
                                    void* param_buf, size_t param_buf_size, size_t* got_size) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (mount_point == nullptr || param_buf == nullptr || param_type > 5 ||
 	    std::memchr(mount_point->data, 0, sizeof(mount_point->data)) == nullptr) {
@@ -1120,6 +1139,7 @@ int KYTY_SYSV_ABI SaveDataGetParam(const SaveDataMountPoint* mount_point, uint32
 
 int KYTY_SYSV_ABI SaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDataIcon* icon) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (mount_point == nullptr || icon == nullptr) {
 		return SAVE_DATA_ERROR_PARAMETER;
@@ -1137,6 +1157,7 @@ int KYTY_SYSV_ABI SaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDa
 
 int KYTY_SYSV_ABI SaveDataSaveIconByPath(const SaveDataMountPoint* mount_point, const char* path) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (mount_point == nullptr || path == nullptr) {
 		return SAVE_DATA_ERROR_PARAMETER;
@@ -1151,6 +1172,7 @@ int KYTY_SYSV_ABI SaveDataSaveIconByPath(const SaveDataMountPoint* mount_point, 
 
 int KYTY_SYSV_ABI SaveDataSyncSaveDataMemory(const SaveDataMemorySync* sync_param) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (sync_param == nullptr || sync_param->slot_id >= 4 || sync_param->option > 1) {
 		return SAVE_DATA_ERROR_PARAMETER;
@@ -1184,6 +1206,7 @@ int KYTY_SYSV_ABI SaveDataSyncSaveDataMemory(const SaveDataMemorySync* sync_para
 
 int KYTY_SYSV_ABI SaveDataGetEventResult(const void* /*event_param*/, SaveDataEvent* event) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (event == nullptr) {
 		return SAVE_DATA_ERROR_PARAMETER;
@@ -1210,6 +1233,7 @@ int KYTY_SYSV_ABI SaveDataGetEventResult(const void* /*event_param*/, SaveDataEv
 
 int KYTY_SYSV_ABI SaveDataConvert(const SaveDataConvert* convert) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	const auto valid_name = [](const SceSaveDataDirName* name) {
 		return valid_path_component(name->data) && !is_memory_dir_name(name->data);
@@ -1260,6 +1284,7 @@ int KYTY_SYSV_ABI SaveDataConvert(const SaveDataConvert* convert) {
 
 int KYTY_SYSV_ABI SaveDataBackup(const SaveDataBackup* backup) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	LOGF("\t backup = 0x%016" PRIx64 "\n", reinterpret_cast<uint64_t>(backup));
 
@@ -1283,6 +1308,7 @@ int KYTY_SYSV_ABI SaveDataBackup(const SaveDataBackup* backup) {
 int KYTY_SYSV_ABI SaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_t param_type,
                                    const void* param_buf, size_t param_buf_size) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (mount_point == nullptr || param_buf == nullptr || param_type > 4 ||
 	    std::memchr(mount_point->data, 0, sizeof(mount_point->data)) == nullptr ||
@@ -1336,6 +1362,7 @@ int KYTY_SYSV_ABI SaveDataSetParam(const SaveDataMountPoint* mount_point, uint32
 int KYTY_SYSV_ABI SaveDataGetMountInfo(const SaveDataMountPoint* mount_point,
                                        SaveDataMountInfo*        info) {
 	PRINT_NAME();
+	KYTY_SAVE_TRACE();
 
 	if (mount_point == nullptr || info == nullptr ||
 	    std::memchr(mount_point->data, 0, sizeof(mount_point->data)) == nullptr) {

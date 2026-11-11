@@ -992,6 +992,11 @@ public:
 		if (out == nullptr) {
 			return false;
 		}
+		// Games poll this in a tight loop: an empty queue must not take the player lock.
+		audio_polls.fetch_add(1, std::memory_order_relaxed);
+		if (audio_frames.Empty()) {
+			return false;
+		}
 		std::lock_guard lock(mutex);
 		if (paused || state != State::Playing || !audio_id ||
 		    trick_speed != AVPLAYER_TRICK_SPEED_NORMAL) {
@@ -1003,6 +1008,11 @@ public:
 		}
 		if (current_audio) {
 			audio_buffers.Push(std::move(current_audio->buffer));
+		}
+		if (++audio_collected % 250 == 0) {
+			std::fprintf(stderr, "[avplayer] audio polls=%llu frames=%llu\n",
+			             static_cast<unsigned long long>(audio_polls.load(std::memory_order_relaxed)),
+			             static_cast<unsigned long long>(audio_collected));
 		}
 		current_audio = std::move(*frame);
 		std::memset(out, 0, sizeof(*out));
@@ -1029,6 +1039,8 @@ public:
 	}
 
 private:
+	std::atomic<uint64_t> audio_polls {0};
+	uint64_t              audio_collected = 0;
 	enum class State { Ready, Playing, Stopped };
 
 	bool DrainedNoLock() const {
@@ -1129,15 +1141,32 @@ private:
 		if (c == nullptr) {
 			return false;
 		}
-		if (avcodec_parameters_to_context(c, s->codecpar) < 0 ||
-		    avcodec_open2(c, dec, nullptr) < 0) {
+		if (avcodec_parameters_to_context(c, s->codecpar) < 0) {
 			avcodec_free_context(&c);
 			return false;
 		}
+		if (c->codec_type == AVMEDIA_TYPE_VIDEO) {
+			// FFmpeg defaults to one thread: big videos then play slower than real time.
+			int threads = 8;
+			if (const char* v = std::getenv("KYTY_AVPLAYER_THREADS"); v != nullptr && v[0] != '\0') {
+				threads = std::clamp(std::atoi(v), 1, 16);
+			}
+			c->thread_count = threads;
+			c->thread_type  = FF_THREAD_FRAME | FF_THREAD_SLICE;
+		}
+		if (avcodec_open2(c, dec, nullptr) < 0) {
+			avcodec_free_context(&c);
+			return false;
+		}
+		if (c->codec_type == AVMEDIA_TYPE_VIDEO) {
+			std::fprintf(stderr, "[avplayer] video %s %dx%d threads=%d type=%d\n", dec->name, c->width, c->height, c->thread_count, c->active_thread_type);
+		}
+		std::fprintf(stderr, "[avplayer] opened stream=%d type=%d codec=%s rate=%d channels=%d\n", id, static_cast<int>(c->codec_type), dec->name, c->sample_rate, c->ch_layout.nb_channels);
 		*out = c;
 		return true;
 	}
 	bool OpenCodecs() {
+		std::fprintf(stderr, "[avplayer] streams total=%u video=%d audio=%d\n", fmt->nb_streams, video_id ? static_cast<int>(video_id.value()) : -1, audio_id ? static_cast<int>(audio_id.value()) : -1);
 		if (video_id && !OpenCodec(video_id.value(), &video_ctx)) {
 			return false;
 		}

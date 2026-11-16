@@ -3325,7 +3325,14 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 					}
 					// The first level may be a bindless descriptor heap: read 64 KiB of it.
 					static thread_local std::vector<uint32_t> d(16384);
-					const size_t n = read_safe(t, d.data(), depth == 1 ? 16384 : 128);
+					// KYTY_NATIVE_GPU_FIND_TABLE_DWORDS: how much of a first-level table to read (default 16384, a
+					// bindless heap); smaller keeps FIND usable now that GPU-resident tables are readable.
+					static const size_t first_dwords = [] {
+						const char* v = std::getenv("KYTY_NATIVE_GPU_FIND_TABLE_DWORDS");
+						const size_t n = v != nullptr ? static_cast<size_t>(std::strtoul(v, nullptr, 0)) : 16384u;
+						return n == 0 || n > 16384u ? static_cast<size_t>(16384u) : n;
+					}();
+					const size_t n = read_safe(t, d.data(), depth == 1 ? first_dwords : 128);
 					for (size_t j = 0; j + 1 < n; j++) {
 						at.depth = depth;
 						at.table = t;

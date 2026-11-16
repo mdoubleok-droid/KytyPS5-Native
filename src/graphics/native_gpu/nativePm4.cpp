@@ -6341,26 +6341,56 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 					const uint64_t cs = (static_cast<uint64_t>(reg(sh, 0x20Cu)) << 8u) | (static_cast<uint64_t>(reg(sh, 0x20Du) & 0xffu) << 40u);
 					irange_scan(true, stats.dispatches, cs, 0, 0x240u, 16);
 				}
-				if (m_compute_ring) {
-					body.insert(body.end(), dcb.begin() + dw, dcb.begin() + dw + size);
-					body[body.size() - size] |= 2u;
-				} else {
-					pass_on(dw, size, body_before, segs_before, in_place);
-				}
-				// AddDisplayMetaRange: a dispatch writing into a display buffer's DCC metadata (the V# in
-				// COMPUTE_USER_DATA_0/1) is followed by a fill of that metadata with 0xFF (uncompressed).
-				if (static const bool meta_fill = [] {
-					    // Opt-in until the GT7 intro freeze it causes is understood (FINDINGS.md 2026-11-16).
-					    const char* e = std::getenv("KYTY_NATIVE_GPU_DISPLAY_META_FILL");
-					    return e != nullptr && e[0] == '1';
-				    }();
-				    meta_fill && !m_display_meta.empty()) {
-					const uint64_t vbase = static_cast<uint64_t>(reg(sh, 0x240u)) | (static_cast<uint64_t>(reg(sh, 0x241u) & 0xffffu) << 32u);
-					for (const auto& m: m_display_meta) {
-						if (vbase < m.addr || vbase >= m.addr + m.size) {
-							continue;
+				{
+					// AddDisplayMetaRange: libSceAgc's DCC clear writing a display buffer's DCC metadata (the V# in
+					// COMPUTE_USER_DATA_0/1) is followed by fills that keep the metadata uncompressed (0xFF).
+					static const bool meta_fill = [] {
+						const char* e = std::getenv("KYTY_NATIVE_GPU_DISPLAY_META_FILL");
+						return e == nullptr || e[0] != '0';
+					}();
+					const DisplayMeta* hit = nullptr;
+					if (meta_fill && !m_display_meta.empty()) {
+						const uint64_t vbase = static_cast<uint64_t>(reg(sh, 0x240u)) | (static_cast<uint64_t>(reg(sh, 0x241u) & 0xffffu) << 32u);
+						const uint64_t cs    = (static_cast<uint64_t>(reg(sh, 0x20Cu)) << 8u) | (static_cast<uint64_t>(reg(sh, 0x20Du) & 0xffu) << 40u);
+						// libSceAgc's DCC clear: s_inst_prefetch, v_lshl_add_u32 v4, s9, 6, v0, v_mov v0-v3 <- s4-s7 (the fill
+						// pattern), v_cmpx_gt_u32 s8, v4, ..., buffer_store_format_x through the V# in s0-s3.
+						auto is_clear = [&]() {
+							if (const auto it = m_dcc_clear_cs.find(cs); it != m_dcc_clear_cs.end()) {
+								return it->second;
+							}
+							static constexpr uint32_t kSig[12] = {0xbfa00001u, 0xd7460004u, 0x04010c09u, 0x7e000204u, 0x7e020205u, 0x7e040206u,
+							                                      0x7e060207u, 0x7da80808u, 0xbf88000du, 0x360a0883u, 0xbe84047eu, 0xbe86047eu};
+							uint32_t   code[12] = {};
+							const bool match    = cs != 0 && read_safe(cs, code, 12) == 12 && std::equal(std::begin(kSig), std::end(kSig), code);
+							m_dcc_clear_cs[cs]  = match;
+							return match;
+						};
+						for (const auto& m: m_display_meta) {
+							if (vbase < m.addr || vbase >= m.addr + m.size) {
+								continue;
+							}
+							const bool clear = is_clear();
+							if (m_meta_fill_logged.insert({cs, m.addr}).second) {
+								std::fprintf(stderr, "native shadow: dispatch cs 0x%llx writes video-out DCC metadata 0x%llx (V# 0x%llx, ud4-7 %08x %08x %08x %08x, %s ring): %s\n",
+								             static_cast<unsigned long long>(cs), static_cast<unsigned long long>(m.addr), static_cast<unsigned long long>(vbase),
+								             reg(sh, 0x244u), reg(sh, 0x245u), reg(sh, 0x246u), reg(sh, 0x247u), m_compute_ring ? "compute" : "gfx",
+								             clear ? "libSceAgc DCC clear, kept uncompressed" : "not the DCC clear, left alone");
+							}
+							hit = clear ? &m : nullptr;
+							break;
 						}
-						// CS_PARTIAL_FLUSH: the dispatch's stores have landed in L2 before the CP's fills.
+					}
+					if (m_compute_ring) {
+						body.insert(body.end(), dcb.begin() + dw, dcb.begin() + dw + size);
+						body[body.size() - size] |= 2u;
+					} else if (hit != nullptr) {
+						// Copied, not run in place: packets of ours follow it (a packet run in place has nothing of ours around it).
+						body.insert(body.end(), dcb.begin() + dw, dcb.begin() + dw + size);
+					} else {
+						pass_on(dw, size, body_before, segs_before, in_place);
+					}
+					if (hit != nullptr) {
+						// CS_PARTIAL_FLUSH: the clear's stores have landed in L2 before the CP's fills.
 						body.push_back(Pkt3(IT_EVENT_WRITE, 1, m_compute_ring));
 						body.push_back(0x7u | (4u << 8u));
 						// DMA_DATA fills: CP_SYNC, SRC_SEL 2 (immediate data), DST_SEL 3 (memory through L2), RAW_WAIT.
@@ -6376,16 +6406,15 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 						};
 						// The clear's fill pattern (COMPUTE_USER_DATA_4..7). Clear code 0x00 is the colour 0000: the pixels too.
 						const bool zero = reg(sh, 0x244u) == 0 && reg(sh, 0x245u) == 0 && reg(sh, 0x246u) == 0 && reg(sh, 0x247u) == 0;
-						if (zero && m.color_addr != 0 && m.color_size != 0) {
-							fill(m.color_addr, m.color_size, 0u);
+						if (zero && hit->color_addr != 0 && hit->color_size != 0) {
+							fill(hit->color_addr, hit->color_size, 0u);
 							NoteOnce(43, "video-out pixels zeroed for a title's DCC clear to 0000");
 						} else if (!zero) {
 							NoteOnce(44, "video-out DCC clear with a non-zero code: pixels left as drawn");
 						}
-						fill(m.addr, m.size, 0xffffffffu);
+						fill(hit->addr, hit->size, 0xffffffffu);
 						stats.display_meta_fills++;
 						NoteOnce(42, "video-out DCC metadata set to uncompressed after a title's clear");
-						break;
 					}
 				}
 				stats.dispatches++;

@@ -1379,6 +1379,8 @@ private:
 		uint64_t color_size;
 	};
 	std::vector<DisplayMeta> m_display_meta; // AddDisplayMetaRange
+	std::map<uint64_t, bool>      m_dcc_clear_cs;     // compute shader -> is libSceAgc's DCC clear (AddDisplayMetaRange)
+	std::set<std::pair<uint64_t, uint64_t>> m_meta_fill_logged; // (shader, metadata) pairs already logged
 	uint32_t                     m_display_dcc_off = 0;           // MRT slots drawn with DCC cleared
 	uint32_t                     m_display_dcc_gpu = 0;           // MRT slots whose CP INFO lost DCC on the GPU (EmitCpShadowDccOff)
 	uint32_t                     m_saved_display_dcc_gpu = 0;     // m_display_dcc_gpu at the GPU push

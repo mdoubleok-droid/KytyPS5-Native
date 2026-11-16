@@ -5936,6 +5936,15 @@ private:
 			std::fprintf(stderr, "native shadow: full barrier before %zu pixel shader(s) (experiment)\n", shaders.size());
 			m_translator.SetBarrierBeforePs(std::move(shaders));
 		}
+		// KYTY_NATIVE_GPU_DISPLAY_META_FILL=1: the translator reads compute shader code (the DCC clear's signature);
+		// shader code in GPU-resident blocks is read through the GEM alias.
+		if (const char* mf = std::getenv("KYTY_NATIVE_GPU_DISPLAY_META_FILL"); (mf == nullptr || mf[0] != '0') && m_gem != nullptr) {
+			auto read = [](uint64_t a, uint32_t* dst, size_t dwords, void* user) -> size_t {
+				return static_cast<size_t>(static_cast<GemBacking*>(user)->ReadGuest(a, dst, dwords * 4u) / 4u);
+			};
+			m_translator.SetLodGuestRead(read, m_gem);
+			m_acb_translator.SetLodGuestRead(read, m_gem);
+		}
 		// KYTY_NATIVE_GPU_FIND=0xADDR:0xSIZE: log the draws/dispatches whose resources reach that range.
 		if (const char* find = std::getenv("KYTY_NATIVE_GPU_FIND"); find != nullptr) {
 			char*          end  = nullptr;

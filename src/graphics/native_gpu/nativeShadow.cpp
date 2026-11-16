@@ -6224,6 +6224,24 @@ private:
 		}
 		// Video-out buffers presented from plain copies (ShadowAddDisplayCopy).
 		StartDisplayCopiesLocked();
+		// KYTY_NATIVE_GPU_INSPECT_RANGE=0xADDR:0xSIZE: references to that range seen at each draw/dispatch (see
+		// Pm4Translator::SetInspectRange), logged like FIND (find reset / KYTY_NATIVE_GPU_FIND_MAX apply).
+		if (const char* ir = std::getenv("KYTY_NATIVE_GPU_INSPECT_RANGE"); ir != nullptr) {
+			char*          end  = nullptr;
+			const uint64_t addr = std::strtoull(ir, &end, 0);
+			const uint64_t size = (end != nullptr && *end == ':') ? std::strtoull(end + 1, nullptr, 0) : 1;
+			m_translator.SetInspectRange(addr, size);
+			m_acb_translator.SetInspectRange(addr, size);
+			if (m_gem != nullptr) {
+				auto read = [](uint64_t a, uint32_t* dst, size_t dwords, void* user) -> size_t {
+					return static_cast<size_t>(static_cast<GemBacking*>(user)->ReadGuest(a, dst, dwords * 4u) / 4u);
+				};
+				m_translator.SetLodGuestRead(read, m_gem);
+				m_acb_translator.SetLodGuestRead(read, m_gem);
+			}
+			std::fprintf(stderr, "native shadow: inspecting references to [0x%llx, +0x%llx) at every draw and dispatch\n",
+			             static_cast<unsigned long long>(addr), static_cast<unsigned long long>(size));
+		}
 		// KYTY_NATIVE_GPU_FIND=0xADDR:0xSIZE: log the draws/dispatches whose resources reach that range.
 		if (const char* find = std::getenv("KYTY_NATIVE_GPU_FIND"); find != nullptr) {
 			char*          end  = nullptr;

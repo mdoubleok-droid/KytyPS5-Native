@@ -4068,6 +4068,16 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 		emit_barrier_raw(pfp);
 		wait_on(!pfp);
 	};
+	// KYTY_NATIVE_GPU_BARRIER_BEFORE_PS: a full flush before draws with these pixel shaders (experiment).
+	auto barrier_before_ps = [&]() {
+		if (m_barrier_ps.empty() || m_fence_va == 0) {
+			return;
+		}
+		const uint64_t ps = (static_cast<uint64_t>(reg(sh, 0x008)) << 8u) | (static_cast<uint64_t>(reg(sh, 0x009)) << 40u);
+		if (m_barrier_ps.count(ps) != 0) {
+			emit_barrier(true);
+		}
+	};
 
 	// Native labels: the segments of the IB (body offsets until it is assembled), where each starts in
 	// the body, the preamble of each one after the first (the state where it starts) and whether it
@@ -6075,7 +6085,7 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 				if (draw) {
 					log_draw(op, index_count, 0, false);
 				}
-				const bool skipped = draw && skip_draw();
+				const bool skipped = draw && (barrier_before_ps(), skip_draw());
 				if (draw && !skipped && m_multi_inst) {
 					pfp_sync_me(); // the PFP fetches the object-id table as it does an indirect draw's arguments
 				}
@@ -6213,7 +6223,7 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 			}
 			case IT_DRAW_INDEX_2:
 				log_draw(op, body_count >= 4 ? bptr[3] : 0, 0, false);
-				if (skip_draw()) {
+				if ((barrier_before_ps(), skip_draw())) {
 					stats.draws_skipped++;
 				} else {
 					body.insert(body.end(), dcb.begin() + dw, dcb.begin() + dw + size);
@@ -6281,7 +6291,7 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 					return fail(op, dw, RefuseWhy::ShortBody);
 				}
 				log_draw(op, bptr[2], 0, false);
-				if (skip_draw()) {
+				if ((barrier_before_ps(), skip_draw())) {
 					stats.draws_skipped++;
 				} else {
 					body.insert(body.end(), dcb.begin() + dw, dcb.begin() + dw + size);
@@ -6294,7 +6304,7 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 			case IT_DRAW_INDIRECT:       // arguments at the SET_BASE address + DATA_OFFSET; same on the gfx ring
 			case IT_DRAW_INDEX_INDIRECT: // the same, indexed through INDEX_BASE / INDEX_BUFFER_SIZE
 				log_draw(op, 0, args_base(false) + (body_count >= 1 ? bptr[0] : 0u), false);
-				if (skip_draw()) {
+				if ((barrier_before_ps(), skip_draw())) {
 					stats.draws_skipped++;
 				} else {
 					pfp_sync_me();
@@ -6317,7 +6327,7 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 				}
 				const uint64_t args = args_base(false) + bptr[0];
 				log_draw(op, 0, args, false);
-				if (skip_draw()) {
+				if ((barrier_before_ps(), skip_draw())) {
 					stats.draws_skipped++;
 				} else {
 					pfp_sync_me();
@@ -6368,7 +6378,7 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 				break;
 			case IT_DRAW_INDEX_AUTO: // a non-indexed draw: no index buffer to reference
 				log_draw(op, body_count >= 1 ? bptr[0] : 0, 0, false);
-				if (skip_draw()) {
+				if ((barrier_before_ps(), skip_draw())) {
 					stats.draws_skipped++;
 				} else {
 					body.insert(body.end(), dcb.begin() + dw, dcb.begin() + dw + size);

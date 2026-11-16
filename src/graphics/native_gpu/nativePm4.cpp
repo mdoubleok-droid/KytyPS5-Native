@@ -6334,6 +6334,35 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 				} else {
 					pass_on(dw, size, body_before, segs_before, in_place);
 				}
+				// AddDisplayMetaRange: a dispatch writing into a display buffer's DCC metadata (the V# in
+				// COMPUTE_USER_DATA_0/1) is followed by a fill of that metadata with 0xFF (uncompressed).
+				if (static const bool meta_fill = [] {
+					    const char* e = std::getenv("KYTY_NATIVE_GPU_DISPLAY_META_FILL");
+					    return e == nullptr || e[0] != '0';
+				    }();
+				    meta_fill && !m_display_meta.empty()) {
+					const uint64_t vbase = static_cast<uint64_t>(reg(sh, 0x240u)) | (static_cast<uint64_t>(reg(sh, 0x241u) & 0xffffu) << 32u);
+					for (const auto& [maddr, msize]: m_display_meta) {
+						if (vbase < maddr || vbase >= maddr + msize) {
+							continue;
+						}
+						// CS_PARTIAL_FLUSH: the dispatch's stores have landed in L2 before the CP's fill.
+						body.push_back(Pkt3(IT_EVENT_WRITE, 1, m_compute_ring));
+						body.push_back(0x7u | (4u << 8u));
+						// DMA_DATA: CP_SYNC, SRC_SEL 2 (immediate data), DST_SEL 3 (memory through L2), RAW_WAIT.
+						for (uint64_t off = 0; off < msize;) {
+							const uint64_t chunk = std::min<uint64_t>(msize - off, (1ull << 26u) - 4u);
+							const uint64_t dst   = maddr + off;
+							body.insert(body.end(), {Pkt3(IT_DMA_DATA, 6, m_compute_ring), (1u << 31u) | (2u << 29u) | (3u << 20u), 0xffffffffu, 0u,
+							                         static_cast<uint32_t>(dst), static_cast<uint32_t>(dst >> 32u),
+							                         (1u << 30u) | static_cast<uint32_t>(chunk)});
+							off += chunk;
+						}
+						stats.display_meta_fills++;
+						NoteOnce(42, "video-out DCC metadata set to uncompressed after a title's clear");
+						break;
+					}
+				}
 				stats.dispatches++;
 				collect_refs();
 				break;

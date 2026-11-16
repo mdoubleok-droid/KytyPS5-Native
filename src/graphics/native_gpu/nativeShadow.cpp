@@ -2091,6 +2091,19 @@ public:
 		return true;
 	}
 
+	void AddDisplayMetaRange(uint64_t addr, uint64_t size) {
+		std::lock_guard<std::mutex> lock(m_mutex);
+		if (m_agr_translator != nullptr) {
+			m_agr_translator->AddDisplayMetaRange(addr, size);
+		}
+		m_acb_translator.AddDisplayMetaRange(addr, size);
+		if (!m_translator.AddDisplayMetaRange(addr, size)) {
+			return;
+		}
+		std::fprintf(stderr, "native shadow: video-out DCC metadata 0x%llx (%llu KiB) kept uncompressed after the title's clears\n",
+		             static_cast<unsigned long long>(addr), static_cast<unsigned long long>(size >> 10u));
+	}
+
 	void AddDisplayRange(uint64_t addr, uint64_t size) {
 		std::lock_guard<std::mutex> lock(m_mutex);
 		if (m_agr_translator != nullptr) {
@@ -8688,6 +8701,12 @@ void ShadowEnqueue(const uint32_t* buffer, uint32_t size_in_dwords, uint32_t que
 bool ShadowDmabufPieces(uint64_t vaddr, uint64_t size, std::vector<NativeDmabufPiece>& out) {
 	static const bool on = !EnvOn("KYTY_NATIVE_GPU_NO_ZERO_COPY");
 	return on && PrimaryRendering() && Shadow::Instance().DmabufPieces(vaddr, size, out);
+}
+
+void ShadowDisplayMetaUncompressed(uint64_t addr, uint64_t size) {
+	if (addr != 0 && size != 0) {
+		Shadow::Instance().AddDisplayMetaRange(addr, size);
+	}
 }
 
 bool ShadowDisplayWithoutDcc(uint64_t addr, uint64_t size) {

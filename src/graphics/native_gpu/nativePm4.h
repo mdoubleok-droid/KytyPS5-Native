@@ -237,6 +237,7 @@ struct Pm4TranslateStats {
 	// the GPU may hold another value than the copy).
 	uint32_t cp_shadow_dcc_gpu   = 0;
 	uint32_t cp_shadow_dcc_back  = 0; // and the DCC given back on the GPU (EmitCpShadowDccRestore)
+	uint32_t display_meta_fills  = 0; // display DCC metadata set to uncompressed after a dispatch (AddDisplayMetaRange)
 	// GPU waits run with shadowing off around them (SetCpShadowWaitOff): 6 dwords each, plus PFP_SYNC_ME where
 	// nothing else gave the ME wait one.
 	uint32_t cp_shadow_wait_wraps = 0;
@@ -998,6 +999,20 @@ public:
 		m_display_ranges.emplace_back(addr, size);
 		return true;
 	}
+	// The DCC metadata of a video-out buffer drawn without DCC (AddDisplayRange). The title still clears it (libSceAgc's
+	// DCC fast-clear dispatch writes the clear code 0x00) and still samples the buffer through a T# with DCC on (GT7's
+	// replay depth of field), which then reads every block as the clear colour: black. After any dispatch that writes
+	// into such a range, the translator fills it with 0xFF (uncompressed), so DCC-aware reads see the plain pixels Kyty
+	// drew. KYTY_NATIVE_GPU_DISPLAY_META_FILL=0 turns it off. False when the range was already known.
+	bool AddDisplayMetaRange(uint64_t addr, uint64_t size) {
+		for (const auto& [a, s]: m_display_meta) {
+			if (a == addr && s == size) {
+				return false;
+			}
+		}
+		m_display_meta.emplace_back(addr, size);
+		return true;
+	}
 	// Context register overrides the PS5 kernel applies through the CP's RCIU CAM (see PatchContext).
 	void SetPs5RegOverrides(bool on) { m_ps5_reg_overrides = on; }
 
@@ -1356,6 +1371,7 @@ private:
 	std::set<uint32_t>           m_dropped_seen;
 	std::array<uint32_t, 4>      m_cu_clamp {};
 	std::vector<std::pair<uint64_t, uint64_t>> m_display_ranges; // AddDisplayRange
+	std::vector<std::pair<uint64_t, uint64_t>> m_display_meta;   // AddDisplayMetaRange
 	uint32_t                     m_display_dcc_off = 0;           // MRT slots drawn with DCC cleared
 	uint32_t                     m_display_dcc_gpu = 0;           // MRT slots whose CP INFO lost DCC on the GPU (EmitCpShadowDccOff)
 	uint32_t                     m_saved_display_dcc_gpu = 0;     // m_display_dcc_gpu at the GPU push

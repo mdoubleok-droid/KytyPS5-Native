@@ -5131,6 +5131,16 @@ private:
 				std::fprintf(stderr, "  %s ud[%u:%u] -> 0x%llx (%s)\n", stage, i, i + 1, static_cast<unsigned long long>(ptr), mapped(ptr));
 				uint32_t     t[128];
 				const size_t n = m_gem->ReadGuest(ptr, t, sizeof(t)) / 4;
+				// KYTY_NATIVE_GPU_INSPECT_RAW=1: the whole 0x200 bytes behind the pointer, 8 dwords a line.
+				if (static const bool raw = std::getenv("KYTY_NATIVE_GPU_INSPECT_RAW") != nullptr; raw) {
+					for (size_t k = 0; k < n; k += 8) {
+						std::fprintf(stderr, "    raw +0x%03zx:", k * 4);
+						for (size_t q = k; q < k + 8 && q < n; q++) {
+							std::fprintf(stderr, " %08x", t[q]);
+						}
+						std::fprintf(stderr, "\n");
+					}
+				}
 				for (size_t k = 0; k + 3 < n; k += 4) {
 					const uint64_t vbase = t[k] | (static_cast<uint64_t>(t[k + 1] & 0xffffu) << 32u);
 					const uint64_t tbase = (t[k] | (static_cast<uint64_t>(t[k + 1] & 0xffu) << 32u)) << 8u;

@@ -1257,6 +1257,9 @@ public:
 
 	// Draws with this pixel shader are reported in Pm4TranslateResult::inspected (0: none).
 	void SetInspectedShaders(std::set<uint64_t> shaders) { m_inspect = std::move(shaders); }
+	// KYTY_NATIVE_GPU_BARRIER_BEFORE_PS (experiment): a full end-of-pipe cache flush + invalidate with a wait (emit_barrier)
+	// before every draw with one of these pixel shaders. Needs SetFenceAddress.
+	void SetBarrierBeforePs(std::set<uint64_t> shaders) { m_barrier_ps = std::move(shaders); }
 
 	// UCONFIG registers the backend is allowed to write. Everything else is dropped, because one
 	// experiment writing other UCONFIG registers froze the whole board (see the probe README).
@@ -1396,6 +1399,7 @@ private:
 	bool                         m_cond_exec     = false;
 	bool                         m_multi_inst    = false;
 	std::set<uint64_t>           m_inspect; // KYTY_NATIVE_GPU_INSPECT_PS: pixel or compute shaders
+	std::set<uint64_t>           m_barrier_ps; // KYTY_NATIVE_GPU_BARRIER_BEFORE_PS
 	bool                         m_compact_refs = false;
 	uint64_t                     m_guess_span   = 32ull << 20u;
 	bool                         m_lod_stats    = false;

@@ -5896,6 +5896,23 @@ private:
 			std::fprintf(stderr, "native shadow: inspecting references to [0x%llx, +0x%llx) at every draw and dispatch\n",
 			             static_cast<unsigned long long>(addr), static_cast<unsigned long long>(size));
 		}
+		// KYTY_NATIVE_GPU_BARRIER_BEFORE_PS=0xADDR[,0xADDR...] (experiment): a full cache flush + invalidate with a wait
+		// before every draw with one of these pixel shaders.
+		if (const char* list = std::getenv("KYTY_NATIVE_GPU_BARRIER_BEFORE_PS"); list != nullptr) {
+			std::set<uint64_t> shaders;
+			for (const char* q = list; *q != '\0';) {
+				char* end = nullptr;
+				const uint64_t a = std::strtoull(q, &end, 0);
+				if (end == q) break;
+				shaders.insert(a);
+				q = (*end == ',') ? end + 1 : end;
+			}
+			if (m_translator.FenceAddress() == 0) {
+				m_translator.SetFenceAddress(m_submitter->ScratchVa() + 1024);
+			}
+			std::fprintf(stderr, "native shadow: full barrier before %zu pixel shader(s) (experiment)\n", shaders.size());
+			m_translator.SetBarrierBeforePs(std::move(shaders));
+		}
 		// KYTY_NATIVE_GPU_FIND=0xADDR:0xSIZE: log the draws/dispatches whose resources reach that range.
 		if (const char* find = std::getenv("KYTY_NATIVE_GPU_FIND"); find != nullptr) {
 			char*          end  = nullptr;

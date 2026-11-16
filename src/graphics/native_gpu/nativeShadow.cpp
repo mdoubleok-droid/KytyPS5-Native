@@ -5884,6 +5884,15 @@ private:
 			const uint64_t size = (end != nullptr && *end == ':') ? std::strtoull(end + 1, nullptr, 0) : 1;
 			m_translator.SetFindRange(addr, size);
 			m_acb_translator.SetFindRange(addr, size);
+			// Descriptor tables in GPU-resident blocks are not readable through the guest views
+			// (process_vm_readv fails there), so FIND reads them through the backing's alias, as INSPECT does.
+			if (m_gem != nullptr) {
+				auto read = [](uint64_t a, uint32_t* dst, size_t dwords, void* user) -> size_t {
+					return static_cast<size_t>(static_cast<GemBacking*>(user)->ReadGuest(a, dst, dwords * 4u) / 4u);
+				};
+				m_translator.SetLodGuestRead(read, m_gem);
+				m_acb_translator.SetLodGuestRead(read, m_gem);
+			}
 			std::fprintf(stderr, "native shadow: looking for references to [0x%llx, +0x%llx)\n",
 			             static_cast<unsigned long long>(addr), static_cast<unsigned long long>(size));
 		}

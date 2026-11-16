@@ -1570,6 +1570,7 @@ public:
 			std::fprintf(stderr, "native shadow: FIND reset at %s %llu (%zu references forgotten)\n", kind,
 			             static_cast<unsigned long long>(frame), m_find_seen.size());
 			m_find_seen.clear();
+			m_inspected = 0; // KYTY_NATIVE_GPU_INSPECT_PS logs its 40 draws again too
 		}
 		for (const auto& h: result.find_hits) {
 			const auto key = std::make_tuple(h.shader, h.user_reg, h.depth, h.word);

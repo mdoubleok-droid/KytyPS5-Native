@@ -3931,6 +3931,9 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 					h.es     = es;
 					h.depth  = 300 + i;
 					h.word   = reg(cx, kCbTargetMask);
+					// CB_COLORn_INFO (format, DCC_ENABLE ...) in `table`, ATTRIB in the user_reg field, as the GPU gets them.
+					h.table    = reg(cx, kCbColor0Info + i * kCbColorStride);
+					h.user_reg = reg(cx, kCbColor0Info + 1 + i * kCbColorStride);
 					h.target = cb;
 					h.image  = true;
 					r.find_hits.push_back(h);

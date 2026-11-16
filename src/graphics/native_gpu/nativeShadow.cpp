@@ -2471,7 +2471,12 @@ public:
 					std::fprintf(stderr, "\n");
 				}
 				if (Libs::CountHleList() != nullptr) {
-					Libs::DumpHleCounts(stderr, static_cast<double>(m_flips), 48);
+					// KYTY_COUNT_HLE_TOP: how many functions each dump lists (default 48).
+					static const size_t hle_top = [] {
+						const char* v = std::getenv("KYTY_COUNT_HLE_TOP");
+						return v != nullptr ? static_cast<size_t>(std::strtoul(v, nullptr, 0)) : static_cast<size_t>(48);
+					}();
+					Libs::DumpHleCounts(stderr, static_cast<double>(m_flips), hle_top);
 				}
 				for (uint32_t k = 0; k < 2; k++) {
 					CutStats& c = m_cut_stats[k];

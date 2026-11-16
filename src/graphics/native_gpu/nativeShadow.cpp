@@ -2091,13 +2091,13 @@ public:
 		return true;
 	}
 
-	void AddDisplayMetaRange(uint64_t addr, uint64_t size) {
+	void AddDisplayMetaRange(uint64_t addr, uint64_t size, uint64_t color_addr, uint64_t color_size) {
 		std::lock_guard<std::mutex> lock(m_mutex);
 		if (m_agr_translator != nullptr) {
-			m_agr_translator->AddDisplayMetaRange(addr, size);
+			m_agr_translator->AddDisplayMetaRange(addr, size, color_addr, color_size);
 		}
-		m_acb_translator.AddDisplayMetaRange(addr, size);
-		if (!m_translator.AddDisplayMetaRange(addr, size)) {
+		m_acb_translator.AddDisplayMetaRange(addr, size, color_addr, color_size);
+		if (!m_translator.AddDisplayMetaRange(addr, size, color_addr, color_size)) {
 			return;
 		}
 		std::fprintf(stderr, "native shadow: video-out DCC metadata 0x%llx (%llu KiB) kept uncompressed after the title's clears\n",
@@ -8703,9 +8703,9 @@ bool ShadowDmabufPieces(uint64_t vaddr, uint64_t size, std::vector<NativeDmabufP
 	return on && PrimaryRendering() && Shadow::Instance().DmabufPieces(vaddr, size, out);
 }
 
-void ShadowDisplayMetaUncompressed(uint64_t addr, uint64_t size) {
+void ShadowDisplayMetaUncompressed(uint64_t addr, uint64_t size, uint64_t color_addr, uint64_t color_size) {
 	if (addr != 0 && size != 0) {
-		Shadow::Instance().AddDisplayMetaRange(addr, size);
+		Shadow::Instance().AddDisplayMetaRange(addr, size, color_addr, color_size);
 	}
 }
 

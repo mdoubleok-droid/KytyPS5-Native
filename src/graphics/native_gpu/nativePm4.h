@@ -999,18 +999,19 @@ public:
 		m_display_ranges.emplace_back(addr, size);
 		return true;
 	}
-	// The DCC metadata of a video-out buffer drawn without DCC (AddDisplayRange). The title still clears it (libSceAgc's
-	// DCC fast-clear dispatch writes the clear code 0x00) and still samples the buffer through a T# with DCC on (GT7's
-	// replay depth of field), which then reads every block as the clear colour: black. After any dispatch that writes
-	// into such a range, the translator fills it with 0xFF (uncompressed), so DCC-aware reads see the plain pixels Kyty
-	// drew. KYTY_NATIVE_GPU_DISPLAY_META_FILL=0 turns it off. False when the range was already known.
-	bool AddDisplayMetaRange(uint64_t addr, uint64_t size) {
-		for (const auto& [a, s]: m_display_meta) {
-			if (a == addr && s == size) {
+	// The DCC metadata of a video-out buffer drawn without DCC (AddDisplayRange). The title still fast-clears it
+	// (libSceAgc's DCC clear dispatch writes clear code 0x00) and samples the buffer through a T# with DCC on (GT7's
+	// replay depth of field, its intro fades), which then reads every block as the clear colour, whatever Kyty drew:
+	// black. After any dispatch that writes into such a range, the translator does what the clear meant on plain
+	// pixels: a zero fill pattern zeroes the buffer's pixels, then the metadata is set to 0xFF (uncompressed) so
+	// DCC-aware reads see the pixels. KYTY_NATIVE_GPU_DISPLAY_META_FILL=0 turns it off. False when already known.
+	bool AddDisplayMetaRange(uint64_t addr, uint64_t size, uint64_t color_addr = 0, uint64_t color_size = 0) {
+		for (const auto& m: m_display_meta) {
+			if (m.addr == addr && m.size == size) {
 				return false;
 			}
 		}
-		m_display_meta.emplace_back(addr, size);
+		m_display_meta.push_back({addr, size, color_addr, color_size});
 		return true;
 	}
 	// Context register overrides the PS5 kernel applies through the CP's RCIU CAM (see PatchContext).
@@ -1371,7 +1372,13 @@ private:
 	std::set<uint32_t>           m_dropped_seen;
 	std::array<uint32_t, 4>      m_cu_clamp {};
 	std::vector<std::pair<uint64_t, uint64_t>> m_display_ranges; // AddDisplayRange
-	std::vector<std::pair<uint64_t, uint64_t>> m_display_meta;   // AddDisplayMetaRange
+	struct DisplayMeta {
+		uint64_t addr;       // DCC metadata
+		uint64_t size;
+		uint64_t color_addr; // the video-out buffer it describes (0: unknown)
+		uint64_t color_size;
+	};
+	std::vector<DisplayMeta> m_display_meta; // AddDisplayMetaRange
 	uint32_t                     m_display_dcc_off = 0;           // MRT slots drawn with DCC cleared
 	uint32_t                     m_display_dcc_gpu = 0;           // MRT slots whose CP INFO lost DCC on the GPU (EmitCpShadowDccOff)
 	uint32_t                     m_saved_display_dcc_gpu = 0;     // m_display_dcc_gpu at the GPU push

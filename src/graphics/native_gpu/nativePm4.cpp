@@ -3813,6 +3813,50 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 			}
 		}
 	};
+	// KYTY_NATIVE_GPU_INSPECT_RANGE (SetInspectRange): references to the range at the point a draw or dispatch is issued.
+	auto irange_scan = [&](bool dispatch, uint32_t index, uint64_t shader, uint64_t es, uint32_t reg0, uint32_t n) {
+		auto in_r = [&](uint64_t a) { return a >= m_irange_lo && a < m_irange_hi; };
+		auto hit  = [&](uint32_t ureg, uint32_t depth, uint64_t table, uint32_t word, uint64_t target, bool image) {
+			FindHit h;
+			h.dispatch = dispatch;
+			h.index    = index;
+			h.shader   = shader;
+			h.es       = es;
+			h.user_reg = ureg;
+			h.depth    = depth;
+			h.table    = table;
+			h.word     = word;
+			h.target   = target;
+			h.image    = image;
+			r.find_hits.push_back(h);
+		};
+		auto test = [&](uint32_t lo, uint32_t hi, uint32_t ureg, uint32_t depth, uint64_t table, uint32_t word) {
+			const uint64_t image = (static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi & 0xffu) << 32u)) << 8u;
+			const uint64_t ptr   = static_cast<uint64_t>(lo) | (static_cast<uint64_t>(hi & 0xffffu) << 32u);
+			if (in_r(image)) {
+				hit(ureg, depth, table, word, image, true);
+			} else if (in_r(ptr)) {
+				hit(ureg, depth, table, word, ptr, false);
+			}
+		};
+		uint32_t ud[33] = {};
+		for (uint32_t i = 0; i < n; i++) {
+			ud[i] = reg(sh, reg0 + i);
+		}
+		std::set<uint64_t> seen;
+		static thread_local std::vector<uint32_t> t(64);
+		for (uint32_t i = 0; i + 1 < n; i++) {
+			test(ud[i], ud[i + 1], reg0 + i, 200, 0, i);
+			const uint64_t tab = static_cast<uint64_t>(ud[i]) | (static_cast<uint64_t>(ud[i + 1] & 0xffffu) << 32u);
+			if (tab < 0x100000000ull || tab >= 0x10000000000ull || (tab & 3u) != 0 || !seen.insert(tab).second) {
+				continue;
+			}
+			const size_t got = read_safe(tab, t.data(), 64);
+			for (size_t j = 0; j + 1 < got; j++) {
+				test(t[j], t[j + 1], reg0 + i, 201, tab, static_cast<uint32_t>(j));
+			}
+		}
+	};
 	auto skip_draw = [&]() {
 		fix_display_dcc();
 		const uint64_t ps = (static_cast<uint64_t>(reg(sh, 0x008)) << 8u) | (static_cast<uint64_t>(reg(sh, 0x009)) << 40u);
@@ -3825,6 +3869,26 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 				snap.gs_user_data[i] = reg(sh, 0x08C + i);
 			}
 			r.inspected.push_back(snap);
+		}
+		if (m_irange_hi > m_irange_lo) {
+			const uint64_t es = (static_cast<uint64_t>(reg(sh, 0x0C8)) << 8u) | (static_cast<uint64_t>(reg(sh, 0x0C9)) << 40u);
+			irange_scan(false, stats.draws, ps, es, 0x00C, 32);
+			irange_scan(false, stats.draws, ps, es, 0x08C, 32);
+			for (uint32_t i = 0; i < 8; i++) {
+				const uint64_t cb = (static_cast<uint64_t>(reg(cx, kCbColor0Base + i * kCbColorStride)) << 8u) |
+				                    (static_cast<uint64_t>(reg(cx, kCbColor0BaseExt + i) & 0xffu) << 40u);
+				if (cb >= m_irange_lo && cb < m_irange_hi) {
+					FindHit h;
+					h.index  = stats.draws;
+					h.shader = ps;
+					h.es     = es;
+					h.depth  = 300 + i;
+					h.word   = reg(cx, kCbTargetMask);
+					h.target = cb;
+					h.image  = true;
+					r.find_hits.push_back(h);
+				}
+			}
 		}
 		return !m_skip_ps.empty() && m_skip_ps.count(ps) != 0;
 	};
@@ -6246,6 +6310,10 @@ Pm4TranslateResult Pm4Translator::Translate(std::span<const uint32_t> dcb) {
 						snap.ps_user_data[i] = reg(sh, 0x240u + i);
 					}
 					r.inspected.push_back(snap);
+				}
+				if (m_irange_hi > m_irange_lo) {
+					const uint64_t cs = (static_cast<uint64_t>(reg(sh, 0x20Cu)) << 8u) | (static_cast<uint64_t>(reg(sh, 0x20Du) & 0xffu) << 40u);
+					irange_scan(true, stats.dispatches, cs, 0, 0x240u, 16);
 				}
 				if (m_compute_ring) {
 					body.insert(body.end(), dcb.begin() + dw, dcb.begin() + dw + size);

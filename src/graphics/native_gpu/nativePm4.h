@@ -1246,6 +1246,14 @@ public:
 		m_find_lo = addr;
 		m_find_hi = addr + size;
 	}
+	// KYTY_NATIVE_GPU_INSPECT_RANGE: at every draw (as KYTY_NATIVE_GPU_INSPECT_PS captures it) and every direct
+	// dispatch, look for references to [addr, addr + size) in the user data (inline T#/V#/pointers), in the first
+	// 64 dwords of every table the user data points at, and in the 8 colour targets. Reported as find_hits with
+	// depth 200 (inline), 201 (table) or 300 + slot (colour target).
+	void SetInspectRange(uint64_t addr, uint64_t size) {
+		m_irange_lo = addr;
+		m_irange_hi = addr + size;
+	}
 
 	// Draws with this pixel shader are reported in Pm4TranslateResult::inspected (0: none).
 	void SetInspectedShaders(std::set<uint64_t> shaders) { m_inspect = std::move(shaders); }
@@ -1418,6 +1426,8 @@ private:
 	size_t                       m_bucket_hi = 0;
 	uint64_t                     m_find_lo    = 0;
 	uint64_t                     m_find_hi    = 0;
+	uint64_t                     m_irange_lo  = 0;
+	uint64_t                     m_irange_hi  = 0;
 	uint64_t                     m_cp_shadow_va      = 0; // SetCpShadow
 	CpShadowMode                 m_cp_shadow_mode    = CpShadowMode::Off;
 	uint32_t                     m_cp_shadow_classes = kCpShadowClasses;

@@ -821,6 +821,12 @@ std::atomic<uint32_t>& DumpsLeft() {
 	return n;
 }
 
+// Control socket "find reset": forget which KYTY_NATIVE_GPU_FIND references were already logged, so the next
+// frames report every reference again (e.g. right after a scene change).
+std::atomic<bool>& FindResetRequested() {
+	static std::atomic<bool> b {false};
+	return b;
+}
 // Control socket "crumbs N": the next N translated buffers (DCBs and ACBs) are written to
 // KYTY_NATIVE_GPU_DUMP_DIR as <kind><n>.dcb.bin / .ib.bin, without slowing every frame like
 // KYTY_NATIVE_GPU_BREADCRUMBS.
@@ -951,11 +957,14 @@ void StartControlSocket() {
 					count = count != 0 ? count : 8u;
 					DemandedDumps().store(count);
 					std::snprintf(reply, sizeof(reply), "ok dumping the next %u flips\n", count);
+				} else if (line == "find reset") {
+					FindResetRequested().store(true);
+					std::snprintf(reply, sizeof(reply), "ok FIND references are logged again from the next buffer\n");
 				} else if (line == "cpshadow") {
 					DemandedCpShadowCheck().store(true);
 					std::snprintf(reply, sizeof(reply), "ok comparing the CP shadow with the CPU copy when the gfx ring is next idle (cpshadow_N.txt)\n");
 				} else {
-					std::snprintf(reply, sizeof(reply), "unknown command; try: dump [N], crumbs N, cpshadow, pad play FILE [ELAPSED], ping\n");
+					std::snprintf(reply, sizeof(reply), "unknown command; try: dump [N], crumbs N, find reset, cpshadow, pad play FILE [ELAPSED], ping\n");
 				}
 				::send(c, reply, std::strlen(reply), MSG_NOSIGNAL);
 				line.clear();
@@ -1571,9 +1580,19 @@ public:
 				PrintAudit("every 30 s", false, true);
 			}
 		}
+		// KYTY_NATIVE_GPU_FIND_MAX: how many distinct references to log (default 64), per "find reset".
+		static const size_t find_max = [] {
+			const char* v = std::getenv("KYTY_NATIVE_GPU_FIND_MAX");
+			return v != nullptr ? static_cast<size_t>(std::strtoul(v, nullptr, 0)) : static_cast<size_t>(64);
+		}();
+		if (FindResetRequested().exchange(false)) {
+			std::fprintf(stderr, "native shadow: FIND reset at %s %llu (%zu references forgotten)\n", kind,
+			             static_cast<unsigned long long>(frame), m_find_seen.size());
+			m_find_seen.clear();
+		}
 		for (const auto& h: result.find_hits) {
 			const auto key = std::make_tuple(h.shader, h.user_reg, h.depth, h.word);
-			if (m_find_seen.insert(key).second && m_find_seen.size() <= 64) {
+			if (m_find_seen.insert(key).second && m_find_seen.size() <= find_max) {
 				std::fprintf(stderr,
 				             "native shadow: FIND %s %llu %s %u: shader 0x%llx (es 0x%llx) user reg 0x%03x depth %u table 0x%llx "
 				             "word %u -> %s 0x%llx\n",
